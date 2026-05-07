@@ -87,6 +87,13 @@ const CRITICAL_STYLE_PROPERTIES = new Set([
   'box-sizing',
   'min-height',
   'min-width',
+  'stroke',
+  'stroke-width',
+  'stroke-opacity',
+  'fill',
+  'fill-opacity',
+  'stop-color',
+  'stop-opacity',
 ]);
 
 const styleCache = new WeakMap<Element, CSSStyleDeclaration>();
@@ -225,13 +232,21 @@ const preserveCanvasContent = (original: Element, clone: Element) => {
   const clonedCanvases = clone.querySelectorAll('canvas');
 
   originalCanvases.forEach((originalCanvas, i) => {
-    if (originalCanvases[i] && clonedCanvases[i]) {
+    if (clonedCanvases[i]) {
       const clonedCanvas = clonedCanvases[i] as HTMLCanvasElement;
-      const ctx = clonedCanvas.getContext('2d');
-      if (ctx) {
-        clonedCanvas.width = originalCanvas.width;
-        clonedCanvas.height = originalCanvas.height;
-        ctx.drawImage(originalCanvas, 0, 0);
+      try {
+        const dataUrl = (originalCanvas as HTMLCanvasElement).toDataURL('image/png');
+        if (dataUrl && dataUrl !== 'data:,') {
+          const img = document.createElement('img');
+          img.src = dataUrl;
+          img.style.cssText = clonedCanvas.style.cssText;
+          img.className = clonedCanvas.className;
+          img.width = clonedCanvas.width;
+          img.height = clonedCanvas.height;
+          clonedCanvas.parentNode?.replaceChild(img, clonedCanvas);
+        }
+      } catch (e) {
+        console.warn('Failed to preserve canvas', e);
       }
     }
   });
@@ -245,19 +260,26 @@ const createEnhancedClone = (
   copyAllComputedStyles(originalElement, clone, theme);
   preserveCanvasContent(originalElement, clone);
 
+  const rect = originalElement.getBoundingClientRect();
   const tempContainer = document.createElement('div');
   tempContainer.style.cssText = `
     position: absolute;
     left: -20000px;
     top: -20000px;
-    visibility: hidden;
+    visibility: visible;
     pointer-events: none;
     z-index: -1000;
+    width: ${rect.width}px;
+    height: ${rect.height}px;
+    overflow: hidden;
   `;
+  clone.style.width = `${rect.width}px`;
+  clone.style.height = `${rect.height}px`;
   tempContainer.appendChild(clone);
   document.body.appendChild(tempContainer);
 
   processCloneForVisibility(clone);
+  clone.style.backgroundColor = theme?.colorBgContainer || '#ffffff';
 
   const cleanup = () => {
     styleCache.delete?.(originalElement);
@@ -422,12 +444,11 @@ export default function downloadAsImageOptimized(
         const imageHeight = agRootWrapper.scrollHeight;
 
         const dataUrl = await domToImage.toJpeg(agRootWrapper, {
-          bgcolor: theme?.colorBgContainer,
+          bgcolor: theme?.colorBgContainer || '#ffffff',
           filter,
           quality: IMAGE_DOWNLOAD_QUALITY,
           height: imageHeight,
           width: originalWidth,
-          cacheBust: true,
         });
 
         const link = document.createElement('a');
@@ -457,39 +478,38 @@ export default function downloadAsImageOptimized(
       return;
     }
 
-    // All other chart types: use the clone-based approach
-    let cleanup: (() => void) | null = null;
-
+    // All other chart types: use an isolated clone for maximum reliability
     try {
-      const { clone, cleanup: cleanupFn } = createEnhancedClone(
-        elementToPrint,
-        theme,
-      );
-      cleanup = cleanupFn;
+      await document.fonts.ready;
+      // Wait for any animations to settle
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-      const dataUrl = await domToImage.toJpeg(clone, {
-        bgcolor: theme?.colorBgContainer,
-        filter,
-        quality: IMAGE_DOWNLOAD_QUALITY,
-        height: clone.scrollHeight,
-        width: clone.scrollWidth,
-        cacheBust: true,
-      });
+      const element = elementToPrint as HTMLElement;
+      
+      // Create an enhanced clone that handles canvases and theme colors
+      const { clone, cleanup } = createEnhancedClone(element, theme);
 
-      cleanup();
-      cleanup = null;
+      try {
+        // Ensure the clone has the correct background from theme
+        clone.style.backgroundColor = theme?.colorBgContainer || '#ffffff';
+        
+        const dataUrl = await domToImage.toPng(clone, {
+          bgcolor: theme?.colorBgContainer || '#ffffff',
+          quality: 1,
+        });
 
-      const link = document.createElement('a');
-      link.download = `${generateFileStem(description)}.jpg`;
-      link.href = dataUrl;
-      link.click();
+        const link = document.createElement('a');
+        link.download = `${generateFileStem(description)}.png`;
+        link.href = dataUrl;
+        link.click();
+      } finally {
+        cleanup();
+      }
     } catch (error) {
       console.error('Creating image failed', error);
       addWarningToast(
         t('Image download failed, please refresh and try again.'),
       );
-    } finally {
-      if (cleanup) cleanup();
     }
   };
 }

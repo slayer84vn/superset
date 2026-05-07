@@ -1,14 +1,16 @@
 # -----------------------------------------------------------------------
 # VietinBank Customized Superset Docker Compose
 # -----------------------------------------------------------------------
-x-superset-image: &superset-image superset-vietinbank:latest
-x-superset-volumes:
-  &superset-volumes
+x-superset-image: &superset-image nmq2321984/superset-new:13
+x-superset-volumes: &superset-volumes
   - ./docker:/app/docker
   # Mount toàn bộ thư mục superset để update cả frontend assets và backend code
   - ./superset:/app/superset
   # Mount thư mục frontend để có thể chạy các lệnh npm/node nếu cần
   - ./superset-frontend:/app/superset-frontend
+  - ./setup.py:/app/setup.py
+  - ./pyproject.toml:/app/pyproject.toml
+  - ./superset-core:/app/superset-core
   - superset_home:/app/superset_home
 
 services:
@@ -40,7 +42,7 @@ services:
         required: false
     image: *superset-image
     container_name: superset_app
-    command: ["/app/docker/docker-bootstrap.sh", "app-gunicorn"]
+    command: [ "/app/docker/docker-bootstrap.sh", "app-gunicorn" ]
     user: "root"
     restart: unless-stopped
     ports:
@@ -53,7 +55,7 @@ services:
   superset-init:
     image: *superset-image
     container_name: superset_init
-    command: ["/app/docker/docker-init.sh"]
+    command: [ "/app/docker/docker-init.sh" ]
     env_file:
       - path: docker/.env
         required: true
@@ -72,7 +74,7 @@ services:
   superset-worker:
     image: *superset-image
     container_name: superset_worker
-    command: ["/app/docker/docker-bootstrap.sh", "worker"]
+    command: [ "/app/docker/docker-bootstrap.sh", "worker" ]
     env_file:
       - path: docker/.env
         required: true
@@ -88,7 +90,7 @@ services:
   superset-worker-beat:
     image: *superset-image
     container_name: superset_worker_beat
-    command: ["/app/docker/docker-bootstrap.sh", "beat"]
+    command: [ "/app/docker/docker-bootstrap.sh", "beat" ]
     env_file:
       - path: docker/.env
         required: true

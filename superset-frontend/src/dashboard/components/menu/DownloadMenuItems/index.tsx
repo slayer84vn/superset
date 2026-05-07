@@ -19,6 +19,7 @@
 import { SyntheticEvent } from 'react';
 import { logging } from '@apache-superset/core/utils';
 import { t } from '@apache-superset/core/translation';
+import { useTheme } from '@apache-superset/core/theme';
 import {
   FeatureFlag,
   isFeatureEnabled,
@@ -68,6 +69,7 @@ export const useDownloadMenuItems = (
   } = props;
 
   const { addDangerToast, addSuccessToast } = useToasts();
+  const theme = useTheme();
   const SCREENSHOT_NODE_SELECTOR = '.dashboard';
 
   const isWebDriverScreenshotEnabled =
@@ -88,7 +90,7 @@ export const useDownloadMenuItems = (
 
   const onDownloadImage = async (e: SyntheticEvent) => {
     try {
-      downloadAsImage(SCREENSHOT_NODE_SELECTOR, dashboardTitle, true)(e);
+      downloadAsImage(SCREENSHOT_NODE_SELECTOR, dashboardTitle, true, theme)(e);
     } catch (error) {
       logging.error(error);
       addDangerToast(t('Sorry, something went wrong. Try again later.'));

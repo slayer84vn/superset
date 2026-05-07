@@ -178,6 +178,8 @@
     "geostyler-style": "11.0.2",
     "geostyler-wfs-parser": "^3.0.1",
     "google-auth-library": "^10.6.2",
+    "html-to-image": "^1.11.13",
+    "html2canvas": "^1.4.1",
     "immer": "^11.1.4",
     "interweave": "^13.1.1",
     "jquery": "^4.0.0",
