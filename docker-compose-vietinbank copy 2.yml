@@ -1,8 +1,16 @@
 # -----------------------------------------------------------------------
 # VietinBank Customized Superset Docker Compose
 # -----------------------------------------------------------------------
-x-superset-image: &superset-image superset-chainguard:latest
+x-superset-image: &superset-image nmq2321984/superset-new:13
 x-superset-volumes: &superset-volumes
+  - ./docker:/app/docker
+  # Mount toàn bộ thư mục superset để update cả frontend assets và backend code
+  - ./superset:/app/superset
+  # Mount thư mục frontend để có thể chạy các lệnh npm/node nếu cần
+  - ./superset-frontend:/app/superset-frontend
+  - ./setup.py:/app/setup.py
+  - ./pyproject.toml:/app/pyproject.toml
+  - ./superset-core:/app/superset-core
   - superset_home:/app/superset_home
 
 services:
@@ -34,7 +42,8 @@ services:
         required: false
     image: *superset-image
     container_name: superset_app
-    # user: "root"
+    command: [ "/app/docker/docker-bootstrap.sh", "app-gunicorn" ]
+    user: "root"
     restart: unless-stopped
     ports:
       - 8088:8088
@@ -57,7 +66,7 @@ services:
         condition: service_started
       redis:
         condition: service_started
-    # user: "root"
+    user: "root"
     volumes: *superset-volumes
     healthcheck:
       disable: true
@@ -75,7 +84,7 @@ services:
     depends_on:
       superset-init:
         condition: service_completed_successfully
-    # user: "root"
+    user: "root"
     volumes: *superset-volumes
 
   superset-worker-beat:
@@ -91,7 +100,7 @@ services:
     depends_on:
       superset-init:
         condition: service_completed_successfully
-    # user: "root"
+    user: "root"
     volumes: *superset-volumes
 
   pgadmin:

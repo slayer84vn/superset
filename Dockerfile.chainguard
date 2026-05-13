@@ -1,0 +1,215 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+######################################################################
+# Node stage to deal with static asset construction
+######################################################################
+ARG PY_VER=latest
+ARG BUILDPLATFORM=${BUILDPLATFORM:-amd64}
+ARG BUILD_TRANSLATIONS="false"
+ARG DEV_MODE="false"
+
+# Using Chainguard Node.js image (Wolfi-based)
+FROM --platform=${BUILDPLATFORM} cgr.dev/chainguard/node:latest-dev AS superset-node-ci
+ARG BUILD_TRANSLATIONS
+ENV BUILD_TRANSLATIONS=${BUILD_TRANSLATIONS}
+ARG DEV_MODE
+ENV DEV_MODE=${DEV_MODE}
+
+USER root
+
+# Wolfi uses apk for package management
+RUN apk update && apk add --no-cache \
+    build-base \
+    python3 \
+    zstd \
+    zlib-dev \
+    sqlite \
+    libpq \
+    libffi-dev \
+    cyrus-sasl \
+    openldap
+
+COPY docker/ /app/docker/
+WORKDIR /app/superset-frontend
+
+RUN mkdir -p /app/superset/static/assets /app/superset/translations
+
+COPY superset-frontend/package.json ./
+COPY superset-frontend/package-lock.json ./
+
+# Install node dependencies
+RUN --mount=type=cache,target=/root/.npm \
+    if [ "${DEV_MODE}" = "false" ]; then \
+        npm install --legacy-peer-deps; \
+    else \
+        echo "Skipping npm install in dev mode"; \
+    fi
+
+COPY superset-frontend /app/superset-frontend
+
+######################################################################
+# Node stage to build translations
+######################################################################
+FROM superset-node-ci AS superset-node
+ARG BUILD_TRANSLATIONS
+ENV BUILD_TRANSLATIONS=${BUILD_TRANSLATIONS}
+
+RUN --mount=type=cache,target=/root/.npm \
+    if [ "${DEV_MODE}" = "false" ]; then \
+        echo "Running npm run build"; \
+        npm run build; \
+    else \
+        echo "Skipping npm run build in dev mode"; \
+    fi
+
+COPY superset/translations /app/superset/translations
+RUN if [ "${BUILD_TRANSLATIONS}" = "true" ]; then \
+        npm run build-translation; \
+    fi; \
+    rm -rf /app/superset/translations/*/*/*.po /app/superset/translations/*/*/*.mo;
+
+######################################################################
+# Build stage - Heavy compilation happens here
+######################################################################
+FROM cgr.dev/chainguard/wolfi-base:latest AS python-build
+
+ARG SUPERSET_HOME="/app/superset_home"
+ENV SUPERSET_HOME=${SUPERSET_HOME}
+
+USER root
+# Cài đặt đầy đủ công cụ để build (sẽ bị loại bỏ ở stage cuối)
+RUN apk update && apk add --no-cache \
+    python-3.12 \
+    python-3.12-dev \
+    py3.12-pip \
+    shadow \
+    bash \
+    curl \
+    build-base \
+    libpq \
+    zlib-dev \
+    libffi-dev \
+    cyrus-sasl \
+    openldap \
+    sqlite
+
+RUN mkdir -p ${SUPERSET_HOME} /app/pythonpath /app/data
+RUN useradd --user-group -d ${SUPERSET_HOME} -m --no-log-init --shell /bin/bash superset \
+    && chown -R superset:superset /app
+
+WORKDIR /app
+
+# Cài đặt pip, uv và tạo venv
+RUN pip install --no-cache-dir --upgrade pip uv wheel setuptools
+RUN uv venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+ENV VIRTUAL_ENV="/app/.venv"
+
+# Copy mã nguồn cần thiết trước khi cài đặt dependencies
+COPY requirements/base.txt requirements/
+COPY superset-core superset-core
+COPY pyproject.toml setup.py MANIFEST.in README.md ./
+
+# Cài đặt dependencies (Dùng uv để xử lý local project tốt hơn)
+RUN --mount=type=cache,target=${SUPERSET_HOME}/.cache/uv \
+    uv pip install -r requirements/base.txt
+
+# Ép cài đặt numpy < 2.0 và psycopg2-binary
+RUN --mount=type=cache,target=${SUPERSET_HOME}/.cache/uv \
+    uv pip install "numpy<2.0" "psycopg2-binary>=2.9.1"
+
+# Copy toàn bộ mã nguồn để đảm bảo không thiếu file metadata (như VERSION, scripts, ...)
+COPY . .
+
+# Đảm bảo quyền sở hữu cho user superset
+RUN chown -R superset:superset /app
+
+# Cài đặt chính Superset
+RUN --mount=type=cache,target=${SUPERSET_HOME}/.cache/uv \
+    uv pip install -e ".[postgres,duckdb]"
+
+# Compile python files
+RUN python -m compileall /app/superset || true
+
+######################################################################
+# Final lean image
+######################################################################
+FROM cgr.dev/chainguard/wolfi-base:latest AS lean
+
+ENV PYTHON_VERSION=3.12
+ENV APP_DIR=/app
+ENV SUPERSET_HOME=/app/superset_home
+ENV PYTHONPATH=/app/pythonpath:/app/docker:/app
+ENV FLASK_APP=superset.app:create_app()
+
+# Thiết lập PATH để ưu tiên dùng venv
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Ép hệ thống dùng venv bằng cách tạo symlink (giúp các script ngoài cũng dùng đúng python/pip)
+RUN ln -sf /app/.venv/bin/python /usr/bin/python3 && \
+    ln -sf /app/.venv/bin/python /usr/bin/python && \
+    ln -sf /app/.venv/bin/pip /usr/bin/pip3 && \
+    ln -sf /app/.venv/bin/pip /usr/bin/pip
+
+RUN apk update && apk add --no-cache \
+    python-${PYTHON_VERSION} \
+    libpq \
+    zlib \
+    libffi \
+    cyrus-sasl \
+    openldap \
+    sqlite \
+    bash \
+    curl \
+    shadow \
+    py3.12-pip
+
+RUN mkdir -p ${SUPERSET_HOME} /app/pythonpath /app/data
+RUN useradd --user-group -d ${SUPERSET_HOME} -m --no-log-init --shell /bin/bash superset \
+    && chown -R superset:superset /app
+
+WORKDIR /app
+
+# Copy venv từ stage build sang
+COPY --from=python-build --chown=superset:superset /app/.venv /app/.venv
+
+# Chỉ copy những thư mục cần thiết cho runtime (thay vì copy toàn bộ /app)
+COPY --from=python-build --chown=superset:superset /app/superset /app/superset
+COPY --from=python-build --chown=superset:superset /app/docker /app/docker
+COPY --from=python-build --chown=superset:superset /app/superset-core /app/superset-core
+COPY --from=python-build --chown=superset:superset /app/setup.py /app/pyproject.toml /app/VERSION* /app/
+
+# Copy assets và translations (translations đã được compile ở stage node)
+COPY --from=superset-node --chown=superset:superset /app/superset/static/assets /app/superset/static/assets
+COPY --from=superset-node --chown=superset:superset /app/superset/translations /app/superset/translations
+
+# Fix path in bootstrap script to match our layout
+RUN sed -i 's|/usr/bin/run-server.sh|/app/docker/entrypoints/run-server.sh|g' /app/docker/docker-bootstrap.sh
+
+RUN chmod +x /app/docker/*.sh /app/docker/entrypoints/*.sh
+
+USER superset
+
+HEALTHCHECK CMD curl -f "http://localhost:8088/health" || exit 1
+
+EXPOSE 8088
+
+# Sử dụng run-server.sh trực tiếp để tránh các bước check pip install thừa thãi của bootstrap
+ENTRYPOINT ["/app/docker/docker-bootstrap.sh"]
+CMD ["app-gunicorn"]
