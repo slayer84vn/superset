@@ -84,13 +84,18 @@ case "${1}" in
     ;;
   app-gunicorn)
     echo "Starting web app..."
-    /usr/bin/run-server.sh
+    if [ -f "/usr/bin/run-server.sh" ]; then
+      /usr/bin/run-server.sh
+    else
+      /app/docker/entrypoints/run-server.sh
+    fi
     ;;
   mcp)
     echo "Starting MCP service..."
     superset mcp run --host 0.0.0.0 --port ${MCP_PORT:-5008} --debug
     ;;
   *)
-    echo "Unknown Operation!!!"
+    echo "Running custom command: $@"
+    exec "$@"
     ;;
 esac

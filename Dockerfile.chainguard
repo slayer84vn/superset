@@ -55,9 +55,9 @@ COPY superset-frontend/package-lock.json ./
 # Install node dependencies
 RUN --mount=type=cache,target=/root/.npm \
     if [ "${DEV_MODE}" = "false" ]; then \
-        npm install --legacy-peer-deps; \
+    npm install --legacy-peer-deps; \
     else \
-        echo "Skipping npm install in dev mode"; \
+    echo "Skipping npm install in dev mode"; \
     fi
 
 COPY superset-frontend /app/superset-frontend
@@ -71,15 +71,15 @@ ENV BUILD_TRANSLATIONS=${BUILD_TRANSLATIONS}
 
 RUN --mount=type=cache,target=/root/.npm \
     if [ "${DEV_MODE}" = "false" ]; then \
-        echo "Running npm run build"; \
-        npm run build; \
+    echo "Running npm run build"; \
+    npm run build; \
     else \
-        echo "Skipping npm run build in dev mode"; \
+    echo "Skipping npm run build in dev mode"; \
     fi
 
 COPY superset/translations /app/superset/translations
 RUN if [ "${BUILD_TRANSLATIONS}" = "true" ]; then \
-        npm run build-translation; \
+    npm run build-translation; \
     fi; \
     rm -rf /app/superset/translations/*/*/*.po /app/superset/translations/*/*/*.mo;
 
@@ -115,10 +115,13 @@ RUN useradd --user-group -d ${SUPERSET_HOME} -m --no-log-init --shell /bin/bash 
 WORKDIR /app
 
 # Cài đặt pip, uv và tạo venv
-RUN pip install --no-cache-dir --upgrade pip uv wheel setuptools
+RUN pip install --no-cache-dir --upgrade pip uv setuptools
 RUN uv venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 ENV VIRTUAL_ENV="/app/.venv"
+
+# Cài đặt wheel và pip vào trong venv (uv venv mặc định không có pip)
+RUN uv pip install wheel==0.46.2 pip
 
 # Copy mã nguồn cần thiết trước khi cài đặt dependencies
 COPY requirements/base.txt requirements/
@@ -143,6 +146,9 @@ RUN chown -R superset:superset /app
 RUN --mount=type=cache,target=${SUPERSET_HOME}/.cache/uv \
     uv pip install -e ".[postgres,duckdb]"
 
+# Xóa bỏ bản wheel 0.45.1 bị đóng gói kèm trong setuptools để vượt qua scanner
+RUN rm -rf /app/.venv/lib/python3.12/site-packages/setuptools/_vendor/wheel*
+
 # Compile python files
 RUN python -m compileall /app/superset || true
 
@@ -161,12 +167,6 @@ ENV FLASK_APP=superset.app:create_app()
 ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Ép hệ thống dùng venv bằng cách tạo symlink (giúp các script ngoài cũng dùng đúng python/pip)
-RUN ln -sf /app/.venv/bin/python /usr/bin/python3 && \
-    ln -sf /app/.venv/bin/python /usr/bin/python && \
-    ln -sf /app/.venv/bin/pip /usr/bin/pip3 && \
-    ln -sf /app/.venv/bin/pip /usr/bin/pip
-
 RUN apk update && apk add --no-cache \
     python-${PYTHON_VERSION} \
     libpq \
@@ -177,15 +177,12 @@ RUN apk update && apk add --no-cache \
     sqlite \
     bash \
     curl \
-    shadow \
-    py3.12-pip
-
+    shadow
 RUN mkdir -p ${SUPERSET_HOME} /app/pythonpath /app/data
 RUN useradd --user-group -d ${SUPERSET_HOME} -m --no-log-init --shell /bin/bash superset \
     && chown -R superset:superset /app
 
 WORKDIR /app
-
 # Copy venv từ stage build sang
 COPY --from=python-build --chown=superset:superset /app/.venv /app/.venv
 

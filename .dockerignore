@@ -46,3 +46,10 @@ superset/static/assets/
 superset-websocket/dist/
 venv
 .venv
+**/venv/
+**/.venv/
+**/*.whl
+**/*.egg
+**/.cache/
+**/.uv/
+**/.npm/
