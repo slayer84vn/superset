@@ -35,10 +35,13 @@ const pdfCompressionLevel = getBootstrapData().common.pdf_compression_level;
 const generateFileStem = (description: string, date = new Date()) =>
   `${kebabCase(description)}-${date.toISOString().replace(/[: ]/g, '-')}`;
 
+import type { AgGridContainerElement } from '@superset-ui/core/components';
+import { waitForStableScrollHeight } from './downloadAsImage';
+
 /**
- * Create an event handler for turning an element into an image
+ * Create an event handler for turning an element into a PDF
  *
- * @param selector css selector of the parent element which should be turned into image
+ * @param selector css selector of the parent element which should be turned into PDF
  * @param description name or a short description of what is being printed.
  *   Value will be normalized, and a date as well as a file extension will be added.
  * @param isExactSelector if false, searches for the closest ancestor that matches selector.
@@ -49,7 +52,7 @@ export default function downloadAsPdf(
   description: string,
   isExactSelector = false,
 ) {
-  return (event: SyntheticEvent) => {
+  return async (event: SyntheticEvent) => {
     const elementToPrint = isExactSelector
       ? document.querySelector(selector)
       : event.currentTarget.closest(selector);
@@ -60,20 +63,123 @@ export default function downloadAsPdf(
       );
     }
 
-    const options = {
-      margin: 10,
-      compression: pdfCompressionLevel,
-      filename: `${generateFileStem(description)}.pdf`,
-      image: { type: 'jpeg', quality: 1 },
-      html2canvas: { scale: 2 },
-      excludeClassNames: ['header-controls'],
+    const agContainers = Array.from(
+      elementToPrint.querySelectorAll('[data-themed-ag-grid]'),
+    ) as AgGridContainerElement[];
+
+    const activeAgContainers = agContainers.filter(
+      container => container._agGridApi && container._agGridFirstDataRendered,
+    );
+
+    // Save states to restore later
+    const agStates = activeAgContainers.map(container => {
+      const api = container._agGridApi!;
+      const savedColumnState = api.getColumnState?.();
+      const visibleColumnState =
+        savedColumnState?.filter(col => !col.hide) ?? [];
+      const agRootWrapper = container.querySelector(
+        '.ag-root-wrapper',
+      ) as HTMLElement | null;
+
+      const cellFixups: {
+        el: HTMLElement;
+        minHeight: string;
+        overflow: string;
+      }[] = [];
+
+      return {
+        container,
+        api,
+        savedColumnState,
+        visibleColumnState,
+        agRootWrapper,
+        cellFixups,
+      };
+    });
+
+    const prepareGrids = async () => {
+      for (const state of agStates) {
+        if (state.api) {
+          state.api.setGridOption('domLayout', 'print');
+        }
+      }
+
+      // Wait a couple of animation frames for print layout to take effect
+      await new Promise<void>(resolve =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+
+      for (const state of agStates) {
+        if (state.api && state.visibleColumnState.length > 0) {
+          state.api.applyColumnState?.({
+            state: state.visibleColumnState.map(col => ({
+              colId: col.colId,
+              width: col.width,
+              flex: null,
+            })),
+            applyOrder: false,
+          });
+        }
+        if (state.api) {
+          state.api.resetRowHeights?.();
+        }
+        if (state.agRootWrapper) {
+          await waitForStableScrollHeight(state.agRootWrapper, 5000, 5);
+
+          // Apply cell min-height fixups to handle SVG/HTML rendering bugs in Chrome
+          state.agRootWrapper.querySelectorAll('.ag-cell').forEach(cell => {
+            const el = cell as HTMLElement;
+            const rowHeight =
+              (el.parentElement as HTMLElement)?.offsetHeight ?? 0;
+            const minH = Math.max(rowHeight, el.scrollHeight);
+            state.cellFixups.push({
+              el,
+              minHeight: el.style.minHeight,
+              overflow: el.style.overflow,
+            });
+            el.style.minHeight = minH > 0 ? `${minH}px` : '0px';
+            el.style.overflow = 'hidden';
+          });
+        }
+      }
     };
-    return domToPdf(elementToPrint, options)
-      .then(() => {
-        // nothing to be done
-      })
-      .catch((e: Error) => {
-        logging.error('PDF generation failed', e);
-      });
+
+    const restoreGrids = () => {
+      for (const state of agStates) {
+        state.cellFixups.forEach(({ el, minHeight, overflow }) => {
+          el.style.minHeight = minHeight;
+          el.style.overflow = overflow;
+        });
+        if (state.api) {
+          state.api.setGridOption('domLayout', 'normal');
+          if (state.savedColumnState) {
+            state.api.applyColumnState?.({
+              state: state.savedColumnState,
+              applyOrder: false,
+            });
+          }
+        }
+      }
+    };
+
+    try {
+      await prepareGrids();
+
+      const options = {
+        margin: 10,
+        compression: pdfCompressionLevel,
+        filename: `${generateFileStem(description)}.pdf`,
+        image: { type: 'jpeg', quality: 1 },
+        html2canvas: { scale: 2 },
+        excludeClassNames: ['header-controls'],
+      };
+
+      await domToPdf(elementToPrint, options);
+    } catch (e) {
+      logging.error('PDF generation failed', e);
+      addWarningToast(t('PDF download failed, please refresh and try again.'));
+    } finally {
+      restoreGrids();
+    }
   };
 }

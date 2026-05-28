@@ -235,7 +235,9 @@ const preserveCanvasContent = (original: Element, clone: Element) => {
     if (clonedCanvases[i]) {
       const clonedCanvas = clonedCanvases[i] as HTMLCanvasElement;
       try {
-        const dataUrl = (originalCanvas as HTMLCanvasElement).toDataURL('image/png');
+        const dataUrl = (originalCanvas as HTMLCanvasElement).toDataURL(
+          'image/png',
+        );
         if (dataUrl && dataUrl !== 'data:,') {
           const img = document.createElement('img');
           img.src = dataUrl;
@@ -443,18 +445,27 @@ export default function downloadAsImageOptimized(
 
         const imageHeight = agRootWrapper.scrollHeight;
 
-        const dataUrl = await domToImage.toJpeg(agRootWrapper, {
-          bgcolor: theme?.colorBgContainer || '#ffffff',
-          filter,
-          quality: IMAGE_DOWNLOAD_QUALITY,
-          height: imageHeight,
-          width: originalWidth,
-        });
+        const { clone, cleanup: cloneCleanup } = createEnhancedClone(
+          agRootWrapper,
+          theme,
+        );
 
-        const link = document.createElement('a');
-        link.download = `${generateFileStem(description)}.jpg`;
-        link.href = dataUrl;
-        link.click();
+        try {
+          const dataUrl = await domToImage.toJpeg(clone, {
+            bgcolor: theme?.colorBgContainer || '#ffffff',
+            filter,
+            quality: IMAGE_DOWNLOAD_QUALITY,
+            height: imageHeight,
+            width: originalWidth,
+          });
+
+          const link = document.createElement('a');
+          link.download = `${generateFileStem(description)}.jpg`;
+          link.href = dataUrl;
+          link.click();
+        } finally {
+          cloneCleanup();
+        }
       } catch (error) {
         console.error('Creating image failed', error);
         addWarningToast(
@@ -485,14 +496,14 @@ export default function downloadAsImageOptimized(
       await new Promise(resolve => setTimeout(resolve, 500));
 
       const element = elementToPrint as HTMLElement;
-      
+
       // Create an enhanced clone that handles canvases and theme colors
       const { clone, cleanup } = createEnhancedClone(element, theme);
 
       try {
         // Ensure the clone has the correct background from theme
         clone.style.backgroundColor = theme?.colorBgContainer || '#ffffff';
-        
+
         const dataUrl = await domToImage.toPng(clone, {
           bgcolor: theme?.colorBgContainer || '#ffffff',
           quality: 1,

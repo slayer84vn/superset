@@ -24,7 +24,10 @@ import downloadAsImageOptimized, {
 
 jest.mock('dom-to-image-more', () => ({
   __esModule: true,
-  default: { toJpeg: jest.fn() },
+  default: {
+    toJpeg: jest.fn(),
+    toPng: jest.fn(),
+  },
 }));
 
 jest.mock('src/components/MessageToasts/actions', () => ({
@@ -36,6 +39,7 @@ jest.mock('@apache-superset/core/translation', () => ({
 }));
 
 const mockToJpeg = domToImage.toJpeg as jest.Mock;
+const mockToPng = domToImage.toPng as jest.Mock;
 const mockAddWarningToast = addWarningToast as jest.Mock;
 
 // document.fonts.ready is not implemented in jsdom; provide a resolved promise
@@ -81,6 +85,7 @@ function attachMockApi(
 beforeEach(() => {
   jest.clearAllMocks();
   mockToJpeg.mockResolvedValue('data:image/jpeg;base64,test');
+  mockToPng.mockResolvedValue('data:image/png;base64,test');
 });
 
 afterEach(() => {
@@ -563,9 +568,9 @@ test('falls through to clone path for dashboard export with a single ag-grid cha
   const handler = downloadAsImageOptimized('.dashboard', 'My Dashboard', true);
   await handler({ currentTarget: {} } as any);
 
-  expect(mockToJpeg).toHaveBeenCalledWith(
+  expect(mockToPng).toHaveBeenCalledWith(
     expect.any(HTMLElement),
-    expect.objectContaining({ quality: 0.95 }),
+    expect.objectContaining({ quality: 1 }),
   );
   expect(mockAddWarningToast).not.toHaveBeenCalled();
 
@@ -590,25 +595,25 @@ test('falls through to clone path for dashboard export with multiple ag-grid cha
   const handler = downloadAsImageOptimized('.dashboard', 'My Dashboard', true);
   await handler({ currentTarget: {} } as any);
 
-  expect(mockToJpeg).toHaveBeenCalledWith(
+  expect(mockToPng).toHaveBeenCalledWith(
     expect.any(HTMLElement),
-    expect.objectContaining({ quality: 0.95 }),
+    expect.objectContaining({ quality: 1 }),
   );
   expect(mockAddWarningToast).not.toHaveBeenCalled();
 
   document.body.removeChild(dashboard);
 });
 
-test('captures JPEG for non-ag-grid elements via the clone path', async () => {
+test('captures PNG for non-ag-grid elements via the clone path', async () => {
   const container = document.createElement('div');
   document.body.appendChild(container);
 
   const handler = downloadAsImageOptimized('div', 'Bar Chart');
   await handler(syntheticEventFor(container));
 
-  expect(mockToJpeg).toHaveBeenCalledWith(
+  expect(mockToPng).toHaveBeenCalledWith(
     expect.any(HTMLElement),
-    expect.objectContaining({ quality: 0.95 }),
+    expect.objectContaining({ quality: 1 }),
   );
   expect(mockAddWarningToast).not.toHaveBeenCalled();
 
@@ -616,7 +621,7 @@ test('captures JPEG for non-ag-grid elements via the clone path', async () => {
 });
 
 test('shows warning toast when clone capture throws', async () => {
-  mockToJpeg.mockRejectedValue(new Error('clone capture failed'));
+  mockToPng.mockRejectedValue(new Error('clone capture failed'));
   const container = document.createElement('div');
   document.body.appendChild(container);
 
@@ -662,7 +667,7 @@ test('ag-grid path falls back to white background when theme is absent', async (
 
   expect(mockToJpeg).toHaveBeenCalledWith(
     expect.any(HTMLElement),
-    expect.objectContaining({ bgcolor: undefined }),
+    expect.objectContaining({ bgcolor: '#ffffff' }),
   );
 
   cleanup();
@@ -676,9 +681,9 @@ test('clone path falls back to white background when theme is absent', async () 
   const handler = downloadAsImageOptimized('div', 'Bar Chart');
   await handler(syntheticEventFor(container));
 
-  expect(mockToJpeg).toHaveBeenCalledWith(
+  expect(mockToPng).toHaveBeenCalledWith(
     expect.any(HTMLElement),
-    expect.objectContaining({ bgcolor: undefined }),
+    expect.objectContaining({ bgcolor: '#ffffff' }),
   );
 
   document.body.removeChild(container);

@@ -1,7 +1,7 @@
 # -----------------------------------------------------------------------
 # VietinBank Customized Superset Docker Compose
 # -----------------------------------------------------------------------
-x-superset-image: &superset-image nmq2321984/superset:1
+x-superset-image: &superset-image superset-chainguard:latest
 x-superset-volumes: &superset-volumes
   - ./docker:/app/docker
   - ./superset:/app/superset
